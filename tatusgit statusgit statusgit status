@@ -1,0 +1,9 @@
+warning: in the working copy of 'backend/.env.example', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/package-lock.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/package.json', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/src/server.ts', LF will be replaced by CRLF the next time Git touches it
+ backend/.env.example      |   2 [32m+[m
+ backend/package-lock.json | 432 [32m+++++++++++++++++++++++++++++++++++++++++++++[m[31m-[m
+ backend/package.json      |   1 [32m+[m
+ backend/src/server.ts     |  34 [32m++++[m
+ 4 files changed, 467 insertions(+), 2 deletions(-)
