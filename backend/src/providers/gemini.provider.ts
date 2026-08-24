@@ -1,9 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
-import { LLMProvider } from './llm.provider';
+import { LLMProvider } from './llm.provider.js';
 
 export class GeminiProvider implements LLMProvider {
   private ai: GoogleGenAI;
-  private model: string;
+  public readonly model: string;
 
   constructor() {
     const apiKey = process.env.GEMINI_API_KEY;
