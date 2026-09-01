@@ -230,6 +230,113 @@ body {
   background: rgba(56, 189, 248, 0.08);
 }
 
+.variables-card {
+  border-color: rgba(129, 140, 248, 0.25);
+  background: rgba(22, 30, 46, 0.85);
+}
+
+.variables-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.variables-count-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--accent-purple);
+  background: rgba(129, 140, 248, 0.12);
+  border: 1px solid rgba(129, 140, 248, 0.25);
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+}
+
+.variables-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.variable-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.variable-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.variable-tag {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: var(--accent-cyan);
+  background: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.variable-input {
+  background: rgba(11, 15, 25, 0.75);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  color: var(--text-main);
+  font-family: var(--font-family);
+  font-size: 0.9rem;
+  padding: 0.65rem 0.85rem;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.variable-input:focus {
+  border-color: var(--accent-purple);
+  box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.2);
+}
+
+.variable-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.result-section-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.4rem;
+}
+
+.result-block {
+  margin-bottom: 1.25rem;
+}
+
+.prompt-display-box {
+  background: rgba(11, 15, 25, 0.5);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  color: #cbd5e1;
+  font-size: 0.88rem;
+  line-height: 1.5;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.resolved-display-box {
+  border-color: rgba(56, 189, 248, 0.2);
+  background: rgba(56, 189, 248, 0.04);
+}
+
 .output-content {
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--card-border);

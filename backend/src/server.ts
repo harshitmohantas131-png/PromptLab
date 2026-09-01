@@ -37,9 +37,9 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// L1.3 Application Feature: Prompt Execution
+// L1.4 Application Feature: Prompt Execution with Template Variables
 app.post('/api/prompts/execute', async (req: Request, res: Response) => {
-  const { prompt } = req.body;
+  const { prompt, variables } = req.body;
 
   if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
     return res.status(400).json({
@@ -47,12 +47,32 @@ app.post('/api/prompts/execute', async (req: Request, res: Response) => {
     });
   }
 
+  if (
+    variables !== undefined &&
+    (typeof variables !== 'object' || variables === null || Array.isArray(variables))
+  ) {
+    return res.status(400).json({
+      error: "Invalid request: 'variables' must be an object."
+    });
+  }
+
   try {
     const promptService = getPromptService();
-    const result = await promptService.execute(prompt.trim());
+    const result = await promptService.execute(prompt.trim(), variables);
     return res.status(200).json(result);
   } catch (error) {
-    console.error('[Prompt Execution Error]:', error instanceof Error ? error.message : 'Unknown error');
+    const errorMessage = error instanceof Error ? error.message : 'Prompt execution failed.';
+    console.error('[Prompt Execution Error]:', errorMessage);
+
+    if (
+      errorMessage.startsWith('Missing value for required variable') ||
+      errorMessage.startsWith('Variable')
+    ) {
+      return res.status(400).json({
+        error: errorMessage
+      });
+    }
+
     return res.status(500).json({
       error: 'Prompt execution failed.'
     });
