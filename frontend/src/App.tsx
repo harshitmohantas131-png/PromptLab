@@ -29,6 +29,7 @@ export default function App() {
   const [isHealthy, setIsHealthy] = useState<boolean | null>(null);
   const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
   const [isClearingHistory, setIsClearingHistory] = useState<boolean>(false);
+  const [selectedExecutionIds, setSelectedExecutionIds] = useState<string[]>([]);
 
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -48,6 +49,16 @@ export default function App() {
   }, [apiBaseUrl]);
 
   const detectedVariables = useMemo(() => extractVariables(prompt), [prompt]);
+
+  // L2.2: Derive exactly two compared executions from existing executions state
+  const comparedExecutions = useMemo(() => {
+    if (selectedExecutionIds.length !== 2) return null;
+    const [idA, idB] = selectedExecutionIds;
+    const execA = executions.find((e) => e.id === idA);
+    const execB = executions.find((e) => e.id === idB);
+    if (!execA || !execB) return null;
+    return [execA, execB] as [ExecutionRecord, ExecutionRecord];
+  }, [selectedExecutionIds, executions]);
 
   const handleVariableChange = (name: string, value: string) => {
     setVariables((prev) => ({
@@ -111,11 +122,31 @@ export default function App() {
       }
       // L2.1: Clear local history after successful API response
       setExecutions([]);
+      // L2.2: Clearing history must also reset selection state
+      setSelectedExecutionIds([]);
     } catch (err: any) {
       console.error('Failed to clear execution history:', err);
     } finally {
       setIsClearingHistory(false);
     }
+  };
+
+  // L2.2: Toggle execution selection, strictly enforcing a 2-selection limit
+  const handleToggleSelect = (id: string) => {
+    setSelectedExecutionIds((prev) => {
+      if (prev.includes(id)) {
+        return prev.filter((selectedId) => selectedId !== id);
+      }
+      if (prev.length >= 2) {
+        return prev; // Prevent third selection
+      }
+      return [...prev, id];
+    });
+  };
+
+  // L2.2: Clear comparison selection
+  const handleClearSelection = () => {
+    setSelectedExecutionIds([]);
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -274,6 +305,103 @@ export default function App() {
           </section>
         )}
 
+        {/* L2.2 Read-Only Side-by-Side Prompt Comparison Section */}
+        {comparedExecutions && (
+          <section className="card comparison-card" aria-label="Prompt Comparison">
+            <div className="card-header">
+              <div className="comparison-title-group">
+                <h2 className="card-title">Prompt Comparison</h2>
+                <span className="comparison-badge">Side-by-Side</span>
+              </div>
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={handleClearSelection}
+                aria-label="Close comparison view"
+              >
+                Clear Comparison ✕
+              </button>
+            </div>
+
+            <div className="comparison-grid">
+              {/* Column 1: Run A */}
+              <div className="comparison-column column-a">
+                <div className="comparison-column-header">
+                  <div className="comparison-run-tag tag-a">Run A (First Selected)</div>
+                  <div className="history-id-badge" title={comparedExecutions[0].id}>
+                    <span className="history-id-label">ID:</span>
+                    <code>{comparedExecutions[0].id.slice(0, 8)}</code>
+                  </div>
+                </div>
+
+                <div className="telemetry-badges comparison-telemetry">
+                  <span className="meta-badge model-badge" title="Model Identifier">
+                    🏷️ {comparedExecutions[0].metadata.model}
+                  </span>
+                  <span className="meta-badge latency-badge" title="Execution Latency">
+                    ⚡ {comparedExecutions[0].metadata.latencyMs} ms
+                  </span>
+                  <span className="meta-badge timestamp-badge" title="Execution Timestamp">
+                    🕒 {new Date(comparedExecutions[0].metadata.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+
+                <div className="comparison-field">
+                  <div className="result-section-label">Original Template</div>
+                  <div className="prompt-display-box">{comparedExecutions[0].prompt}</div>
+                </div>
+
+                <div className="comparison-field">
+                  <div className="result-section-label">Resolved Prompt</div>
+                  <div className="prompt-display-box resolved-display-box">{comparedExecutions[0].resolvedPrompt}</div>
+                </div>
+
+                <div className="comparison-field">
+                  <div className="result-section-label">Generated Output</div>
+                  <div className="output-content">{comparedExecutions[0].output}</div>
+                </div>
+              </div>
+
+              {/* Column 2: Run B */}
+              <div className="comparison-column column-b">
+                <div className="comparison-column-header">
+                  <div className="comparison-run-tag tag-b">Run B (Second Selected)</div>
+                  <div className="history-id-badge" title={comparedExecutions[1].id}>
+                    <span className="history-id-label">ID:</span>
+                    <code>{comparedExecutions[1].id.slice(0, 8)}</code>
+                  </div>
+                </div>
+
+                <div className="telemetry-badges comparison-telemetry">
+                  <span className="meta-badge model-badge" title="Model Identifier">
+                    🏷️ {comparedExecutions[1].metadata.model}
+                  </span>
+                  <span className="meta-badge latency-badge" title="Execution Latency">
+                    ⚡ {comparedExecutions[1].metadata.latencyMs} ms
+                  </span>
+                  <span className="meta-badge timestamp-badge" title="Execution Timestamp">
+                    🕒 {new Date(comparedExecutions[1].metadata.timestamp).toLocaleTimeString()}
+                  </span>
+                </div>
+
+                <div className="comparison-field">
+                  <div className="result-section-label">Original Template</div>
+                  <div className="prompt-display-box">{comparedExecutions[1].prompt}</div>
+                </div>
+
+                <div className="comparison-field">
+                  <div className="result-section-label">Resolved Prompt</div>
+                  <div className="prompt-display-box resolved-display-box">{comparedExecutions[1].resolvedPrompt}</div>
+                </div>
+
+                <div className="comparison-field">
+                  <div className="result-section-label">Generated Output</div>
+                  <div className="output-content">{comparedExecutions[1].output}</div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* L2.1 Execution History Section */}
         <section className="card history-card">
           <div className="card-header">
@@ -282,6 +410,13 @@ export default function App() {
               <span className="count-badge">
                 {executions.length} {executions.length === 1 ? 'run' : 'runs'}
               </span>
+              {executions.length >= 2 && (
+                <span className="selection-status-badge">
+                  {selectedExecutionIds.length === 0 && 'Select 2 to compare'}
+                  {selectedExecutionIds.length === 1 && '1 of 2 selected — choose 1 more'}
+                  {selectedExecutionIds.length === 2 && '2 of 2 selected (comparing above)'}
+                </span>
+              )}
             </div>
             {executions.length > 0 && (
               <button
@@ -300,45 +435,77 @@ export default function App() {
             </div>
           ) : (
             <div className="history-list">
-              {executions.map((item) => (
-                <div key={item.id} className="history-item">
-                  <div className="history-item-header">
-                    <div className="history-id-badge" title={item.id}>
-                      <span className="history-id-label">ID:</span>
-                      <code>{item.id.slice(0, 8)}</code>
-                    </div>
-                    <div className="telemetry-badges">
-                      <span className="meta-badge model-badge" title="Model Identifier">
-                        🏷️ {item.metadata.model}
-                      </span>
-                      <span className="meta-badge latency-badge" title="Execution Latency">
-                        ⚡ {item.metadata.latencyMs} ms
-                      </span>
-                      <span className="meta-badge timestamp-badge" title="Execution Timestamp">
-                        🕒 {new Date(item.metadata.timestamp).toLocaleTimeString()}
-                      </span>
-                    </div>
-                  </div>
+              {executions.map((item) => {
+                const isSelected = selectedExecutionIds.includes(item.id);
+                const isSelectionFull = selectedExecutionIds.length >= 2;
+                const isDisabled = !isSelected && isSelectionFull;
+                const selectionIndex = selectedExecutionIds.indexOf(item.id);
 
-                  <div className="history-item-body">
-                    <div className="history-item-block">
-                      <div className="history-label">Prompt:</div>
-                      <div className="history-text prompt-preview">{item.resolvedPrompt || item.prompt}</div>
+                return (
+                  <div
+                    key={item.id}
+                    className={`history-item ${isSelected ? 'item-selected' : ''}`}
+                  >
+                    <div className="history-item-header">
+                      <div className="history-item-left">
+                        <label
+                          className={`compare-checkbox-label ${isDisabled ? 'disabled' : ''} ${isSelected ? 'active' : ''}`}
+                          title={isDisabled ? 'Maximum of 2 executions can be compared. Deselect one to choose this execution.' : undefined}
+                        >
+                          <input
+                            type="checkbox"
+                            className="compare-checkbox"
+                            checked={isSelected}
+                            disabled={isDisabled}
+                            onChange={() => handleToggleSelect(item.id)}
+                            aria-label={`Select execution ${item.id.slice(0, 8)} for comparison`}
+                          />
+                          <span>Compare</span>
+                        </label>
+                        {isSelected && (
+                          <span className={`selected-run-tag ${selectionIndex === 0 ? 'tag-a' : 'tag-b'}`}>
+                            {selectionIndex === 0 ? 'Run A' : 'Run B'}
+                          </span>
+                        )}
+                        <div className="history-id-badge" title={item.id}>
+                          <span className="history-id-label">ID:</span>
+                          <code>{item.id.slice(0, 8)}</code>
+                        </div>
+                      </div>
+
+                      <div className="telemetry-badges">
+                        <span className="meta-badge model-badge" title="Model Identifier">
+                          🏷️ {item.metadata.model}
+                        </span>
+                        <span className="meta-badge latency-badge" title="Execution Latency">
+                          ⚡ {item.metadata.latencyMs} ms
+                        </span>
+                        <span className="meta-badge timestamp-badge" title="Execution Timestamp">
+                          🕒 {new Date(item.metadata.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
                     </div>
-                    <div className="history-item-block">
-                      <div className="history-label">Output:</div>
-                      <div className="history-text output-preview">{item.output}</div>
+
+                    <div className="history-item-body">
+                      <div className="history-item-block">
+                        <div className="history-label">Prompt:</div>
+                        <div className="history-text prompt-preview">{item.resolvedPrompt || item.prompt}</div>
+                      </div>
+                      <div className="history-item-block">
+                        <div className="history-label">Output:</div>
+                        <div className="history-text output-preview">{item.output}</div>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
       </main>
 
       <footer className="footer">
-        <p>PromptLab — Milestone 2.1 Execution History</p>
+        <p>PromptLab — Milestone 2.2 Prompt Comparison</p>
       </footer>
     </div>
   );
