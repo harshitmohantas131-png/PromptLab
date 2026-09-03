@@ -6,7 +6,8 @@ interface ExecutionMetadata {
   timestamp: string;
 }
 
-interface ExecutionResult {
+interface ExecutionRecord {
+  id: string;
   prompt: string;
   resolvedPrompt: string;
   output: string;
@@ -22,10 +23,12 @@ const extractVariables = (template: string): string[] => {
 export default function App() {
   const [prompt, setPrompt] = useState<string>('');
   const [variables, setVariables] = useState<Record<string, string>>({});
-  const [result, setResult] = useState<ExecutionResult | null>(null);
+  const [result, setResult] = useState<ExecutionRecord | null>(null);
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
   const [executionError, setExecutionError] = useState<string | null>(null);
   const [isHealthy, setIsHealthy] = useState<boolean | null>(null);
+  const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
+  const [isClearingHistory, setIsClearingHistory] = useState<boolean>(false);
 
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -33,6 +36,15 @@ export default function App() {
     fetch(`${apiBaseUrl}/api/health`)
       .then((res) => (res.ok ? setIsHealthy(true) : setIsHealthy(false)))
       .catch(() => setIsHealthy(false));
+
+    fetch(`${apiBaseUrl}/api/executions`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data.executions)) {
+          setExecutions(data.executions);
+        }
+      })
+      .catch((err) => console.error('Failed to load execution history:', err));
   }, [apiBaseUrl]);
 
   const detectedVariables = useMemo(() => extractVariables(prompt), [prompt]);
@@ -75,11 +87,34 @@ export default function App() {
         throw new Error(data.error || `Execution failed with status ${response.status}`);
       }
 
-      setResult(data as ExecutionResult);
+      const executionData = data as ExecutionRecord;
+      setResult(executionData);
+      // L2.1: Use returned execution record to update local history without an extra GET request
+      setExecutions((prev) => [executionData, ...prev]);
     } catch (err: any) {
       setExecutionError(err.message || 'Failed to execute prompt.');
     } finally {
       setIsExecuting(false);
+    }
+  };
+
+  const handleClearHistory = async () => {
+    if (isClearingHistory || executions.length === 0) return;
+
+    setIsClearingHistory(true);
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/executions`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to clear history with status ${response.status}`);
+      }
+      // L2.1: Clear local history after successful API response
+      setExecutions([]);
+    } catch (err: any) {
+      console.error('Failed to clear execution history:', err);
+    } finally {
+      setIsClearingHistory(false);
     }
   };
 
@@ -203,7 +238,12 @@ export default function App() {
         {result && (
           <section className="card result-card">
             <div className="card-header">
-              <h2 className="card-title">Execution Result</h2>
+              <div className="result-title-group">
+                <h2 className="card-title">Execution Result</h2>
+                <span className="execution-id-tag" title={result.id}>
+                  ID: <code>{result.id.slice(0, 8)}</code>
+                </span>
+              </div>
               <div className="telemetry-badges">
                 <span className="meta-badge model-badge" title="Model Identifier">
                   🏷️ {result.metadata.model}
@@ -233,10 +273,72 @@ export default function App() {
             </div>
           </section>
         )}
+
+        {/* L2.1 Execution History Section */}
+        <section className="card history-card">
+          <div className="card-header">
+            <div className="history-title-group">
+              <h2 className="card-title">Execution History</h2>
+              <span className="count-badge">
+                {executions.length} {executions.length === 1 ? 'run' : 'runs'}
+              </span>
+            </div>
+            {executions.length > 0 && (
+              <button
+                className="btn btn-danger-outline"
+                onClick={handleClearHistory}
+                disabled={isClearingHistory}
+              >
+                {isClearingHistory ? 'Clearing...' : 'Clear History'}
+              </button>
+            )}
+          </div>
+
+          {executions.length === 0 ? (
+            <div className="history-empty">
+              No executions recorded in this session yet. Run a prompt above to view execution logs.
+            </div>
+          ) : (
+            <div className="history-list">
+              {executions.map((item) => (
+                <div key={item.id} className="history-item">
+                  <div className="history-item-header">
+                    <div className="history-id-badge" title={item.id}>
+                      <span className="history-id-label">ID:</span>
+                      <code>{item.id.slice(0, 8)}</code>
+                    </div>
+                    <div className="telemetry-badges">
+                      <span className="meta-badge model-badge" title="Model Identifier">
+                        🏷️ {item.metadata.model}
+                      </span>
+                      <span className="meta-badge latency-badge" title="Execution Latency">
+                        ⚡ {item.metadata.latencyMs} ms
+                      </span>
+                      <span className="meta-badge timestamp-badge" title="Execution Timestamp">
+                        🕒 {new Date(item.metadata.timestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="history-item-body">
+                    <div className="history-item-block">
+                      <div className="history-label">Prompt:</div>
+                      <div className="history-text prompt-preview">{item.resolvedPrompt || item.prompt}</div>
+                    </div>
+                    <div className="history-item-block">
+                      <div className="history-label">Output:</div>
+                      <div className="history-text output-preview">{item.output}</div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </main>
 
       <footer className="footer">
-        <p>PromptLab — Milestone 1.4 Prompt Templates & Variables</p>
+        <p>PromptLab — Milestone 2.1 Execution History</p>
       </footer>
     </div>
   );

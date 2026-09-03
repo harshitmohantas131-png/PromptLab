@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { LLMProvider } from './providers/llm.provider.js';
 import { GeminiProvider } from './providers/gemini.provider.js';
 import { PromptService } from './services/prompt.service.js';
+import { executionStore } from './services/execution.store.js';
 
 dotenv.config();
 
@@ -38,6 +39,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 // L1.4 Application Feature: Prompt Execution with Template Variables
+// L2.1 Execution History: Stores successful execution in-memory with unique ID
 app.post('/api/prompts/execute', async (req: Request, res: Response) => {
   const { prompt, variables } = req.body;
 
@@ -59,7 +61,8 @@ app.post('/api/prompts/execute', async (req: Request, res: Response) => {
   try {
     const promptService = getPromptService();
     const result = await promptService.execute(prompt.trim(), variables);
-    return res.status(200).json(result);
+    const executionRecord = executionStore.add(result);
+    return res.status(200).json(executionRecord);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Prompt execution failed.';
     console.error('[Prompt Execution Error]:', errorMessage);
@@ -77,6 +80,24 @@ app.post('/api/prompts/execute', async (req: Request, res: Response) => {
       error: 'Prompt execution failed.'
     });
   }
+});
+
+// L2.1 Execution History: Retrieve all stored in-memory executions
+app.get('/api/executions', (_req: Request, res: Response) => {
+  const executions = executionStore.getAll();
+  return res.status(200).json({
+    executions,
+    total: executions.length
+  });
+});
+
+// L2.1 Execution History: Clear all stored in-memory executions
+app.delete('/api/executions', (_req: Request, res: Response) => {
+  const clearedCount = executionStore.clear();
+  return res.status(200).json({
+    message: 'Execution history cleared successfully.',
+    clearedCount
+  });
 });
 
 app.listen(PORT, () => {
