@@ -5,6 +5,7 @@ import { LLMProvider } from './providers/llm.provider.js';
 import { GeminiProvider } from './providers/gemini.provider.js';
 import { PromptService } from './services/prompt.service.js';
 import { executionStore } from './services/execution.store.js';
+import { evaluationStore } from './services/evaluation.store.js';
 
 dotenv.config();
 
@@ -92,10 +93,122 @@ app.get('/api/executions', (_req: Request, res: Response) => {
 });
 
 // L2.1 Execution History: Clear all stored in-memory executions
+// L2.3 Cascade: Also clears all evaluations to prevent orphaned references
 app.delete('/api/executions', (_req: Request, res: Response) => {
   const clearedCount = executionStore.clear();
+  evaluationStore.clear();
   return res.status(200).json({
     message: 'Execution history cleared successfully.',
+    clearedCount
+  });
+});
+
+// L2.3 Manual Prompt Evaluation: Create or update an evaluation for an execution
+app.post('/api/evaluations', (req: Request, res: Response) => {
+  const { executionId, criteria } = req.body;
+
+  if (!executionId || typeof executionId !== 'string' || executionId.trim().length === 0) {
+    return res.status(400).json({
+      error: "Invalid request: 'executionId' must be a non-empty string."
+    });
+  }
+
+  if (!Array.isArray(criteria) || criteria.length === 0) {
+    return res.status(400).json({
+      error: "Invalid request: 'criteria' must be a non-empty array with at least one criterion."
+    });
+  }
+
+  const sanitizedCriteria: { name: string; score: number }[] = [];
+  const seenNames = new Set<string>();
+
+  for (let i = 0; i < criteria.length; i++) {
+    const item = criteria[i];
+    if (!item || typeof item !== 'object') {
+      return res.status(400).json({
+        error: `Invalid request: Criterion at index ${i} must be an object.`
+      });
+    }
+
+    const { name, score } = item;
+
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
+      return res.status(400).json({
+        error: `Invalid request: Criterion name at index ${i} must be a non-empty string.`
+      });
+    }
+
+    const trimmedName = name.trim();
+    const normalizedName = trimmedName.toLowerCase();
+    if (seenNames.has(normalizedName)) {
+      return res.status(400).json({
+        error: `Duplicate criterion name: '${trimmedName}'. Each criterion in an evaluation must have a unique name.`
+      });
+    }
+    seenNames.add(normalizedName);
+
+    if (typeof score !== 'number' || !Number.isInteger(score) || score < 1 || score > 5) {
+      return res.status(400).json({
+        error: `Invalid request: Criterion score for '${trimmedName}' must be an integer from 1 through 5.`
+      });
+    }
+
+    sanitizedCriteria.push({
+      name: trimmedName,
+      score
+    });
+  }
+
+  const existingExecution = executionStore.getById(executionId.trim());
+  if (!existingExecution) {
+    return res.status(404).json({
+      error: `Execution not found with ID: '${executionId.trim()}'.`
+    });
+  }
+
+  // Backend calculates overallScore as arithmetic mean; client-provided overallScore is ignored
+  const sum = sanitizedCriteria.reduce((acc, c) => acc + c.score, 0);
+  const overallScore = Math.round((sum / sanitizedCriteria.length) * 100) / 100;
+
+  const { record, isCreated } = evaluationStore.addOrUpdate({
+    executionId: executionId.trim(),
+    criteria: sanitizedCriteria,
+    overallScore
+  });
+
+  return res.status(isCreated ? 201 : 200).json(record);
+});
+
+// L2.3 Manual Prompt Evaluation: Retrieve evaluations (optionally filtered by executionId)
+app.get('/api/evaluations', (req: Request, res: Response) => {
+  const { executionId } = req.query;
+
+  if (executionId !== undefined) {
+    if (typeof executionId !== 'string' || executionId.trim().length === 0) {
+      return res.status(400).json({
+        error: "Invalid query: 'executionId' must be a non-empty string."
+      });
+    }
+
+    const evaluation = evaluationStore.getByExecutionId(executionId.trim());
+    return res.status(200).json({
+      evaluations: evaluation ? [evaluation] : [],
+      total: evaluation ? 1 : 0
+    });
+  }
+
+  const evaluations = evaluationStore.getAll();
+  return res.status(200).json({
+    evaluations,
+    total: evaluations.length
+  });
+});
+
+// L2.3 Manual Prompt Evaluation: Clear all stored evaluations
+app.delete('/api/evaluations', (_req: Request, res: Response) => {
+  const clearedCount = evaluationStore.clear();
+  return res.status(200).json({
+    message: 'Evaluation history cleared successfully.',
     clearedCount
   });
 });

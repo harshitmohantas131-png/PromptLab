@@ -14,6 +14,19 @@ interface ExecutionRecord {
   metadata: ExecutionMetadata;
 }
 
+interface Criterion {
+  name: string;
+  score: number;
+}
+
+interface EvaluationRecord {
+  id: string;
+  executionId: string;
+  criteria: Criterion[];
+  overallScore: number;
+  createdAt: string;
+}
+
 const extractVariables = (template: string): string[] => {
   const matches = template.matchAll(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g);
   const variableNames = Array.from(matches, (m) => m[1]);
@@ -30,6 +43,15 @@ export default function App() {
   const [executions, setExecutions] = useState<ExecutionRecord[]>([]);
   const [isClearingHistory, setIsClearingHistory] = useState<boolean>(false);
   const [selectedExecutionIds, setSelectedExecutionIds] = useState<string[]>([]);
+  const [evaluations, setEvaluations] = useState<EvaluationRecord[]>([]);
+  const [evaluatingExecution, setEvaluatingExecution] = useState<ExecutionRecord | null>(null);
+  const [modalCriteria, setModalCriteria] = useState<Criterion[]>([
+    { name: 'Accuracy', score: 5 },
+    { name: 'Clarity', score: 4 },
+  ]);
+  const [newCriterionName, setNewCriterionName] = useState<string>('');
+  const [evaluationError, setEvaluationError] = useState<string | null>(null);
+  const [isSubmittingEval, setIsSubmittingEval] = useState<boolean>(false);
 
   const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
@@ -46,6 +68,15 @@ export default function App() {
         }
       })
       .catch((err) => console.error('Failed to load execution history:', err));
+
+    fetch(`${apiBaseUrl}/api/evaluations`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data.evaluations)) {
+          setEvaluations(data.evaluations);
+        }
+      })
+      .catch((err) => console.error('Failed to load evaluations:', err));
   }, [apiBaseUrl]);
 
   const detectedVariables = useMemo(() => extractVariables(prompt), [prompt]);
@@ -59,6 +90,10 @@ export default function App() {
     if (!execA || !execB) return null;
     return [execA, execB] as [ExecutionRecord, ExecutionRecord];
   }, [selectedExecutionIds, executions]);
+
+  const getEvaluationForExecution = (executionId: string): EvaluationRecord | undefined => {
+    return evaluations.find((ev) => ev.executionId === executionId);
+  };
 
   const handleVariableChange = (name: string, value: string) => {
     setVariables((prev) => ({
@@ -124,6 +159,8 @@ export default function App() {
       setExecutions([]);
       // L2.2: Clearing history must also reset selection state
       setSelectedExecutionIds([]);
+      // L2.3: Clearing history cascades to clear evaluations
+      setEvaluations([]);
     } catch (err: any) {
       console.error('Failed to clear execution history:', err);
     } finally {
@@ -147,6 +184,103 @@ export default function App() {
   // L2.2: Clear comparison selection
   const handleClearSelection = () => {
     setSelectedExecutionIds([]);
+  };
+
+  // L2.3: Manual Evaluation Modal Handlers
+  const handleOpenEvaluationModal = (execution: ExecutionRecord) => {
+    const existing = getEvaluationForExecution(execution.id);
+    if (existing && existing.criteria.length > 0) {
+      setModalCriteria(existing.criteria.map((c) => ({ ...c })));
+    } else {
+      setModalCriteria([
+        { name: 'Accuracy', score: 5 },
+        { name: 'Clarity', score: 4 },
+      ]);
+    }
+    setNewCriterionName('');
+    setEvaluationError(null);
+    setEvaluatingExecution(execution);
+  };
+
+  const handleCloseEvaluationModal = () => {
+    setEvaluatingExecution(null);
+    setEvaluationError(null);
+  };
+
+  const handleScoreChange = (index: number, score: number) => {
+    setModalCriteria((prev) =>
+      prev.map((c, i) => (i === index ? { ...c, score } : c))
+    );
+  };
+
+  const handleRemoveCriterion = (index: number) => {
+    if (modalCriteria.length <= 1) return;
+    setModalCriteria((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAddCriterion = (nameToAdd?: string) => {
+    const name = (nameToAdd || newCriterionName).trim();
+    if (!name) return;
+
+    if (modalCriteria.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
+      setEvaluationError(`Criterion '${name}' is already added.`);
+      return;
+    }
+
+    setModalCriteria((prev) => [...prev, { name, score: 5 }]);
+    if (!nameToAdd) {
+      setNewCriterionName('');
+    }
+    setEvaluationError(null);
+  };
+
+  const handleSubmitEvaluation = async () => {
+    if (!evaluatingExecution || isSubmittingEval) return;
+    if (modalCriteria.length === 0) {
+      setEvaluationError('At least one criterion is required.');
+      return;
+    }
+
+    if (modalCriteria.some((c) => !c.name.trim())) {
+      setEvaluationError('Criterion names cannot be empty.');
+      return;
+    }
+
+    setIsSubmittingEval(true);
+    setEvaluationError(null);
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/evaluations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          executionId: evaluatingExecution.id,
+          criteria: modalCriteria,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to submit evaluation.');
+      }
+
+      const savedEval = data as EvaluationRecord;
+      setEvaluations((prev) => {
+        const idx = prev.findIndex((e) => e.executionId === savedEval.executionId);
+        if (idx !== -1) {
+          const updated = [...prev];
+          updated[idx] = savedEval;
+          return updated;
+        }
+        return [savedEval, ...prev];
+      });
+
+      handleCloseEvaluationModal();
+    } catch (err: any) {
+      setEvaluationError(err.message || 'Failed to submit evaluation.');
+    } finally {
+      setIsSubmittingEval(false);
+    }
   };
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -359,6 +493,46 @@ export default function App() {
                   <div className="result-section-label">Generated Output</div>
                   <div className="output-content">{comparedExecutions[0].output}</div>
                 </div>
+
+                {/* L2.3 Evaluation Summary for Run A */}
+                <div className="comparison-field">
+                  <div className="result-section-label">Manual Evaluation</div>
+                  {getEvaluationForExecution(comparedExecutions[0].id) ? (
+                    <div className="comparison-eval-block">
+                      <div className="comparison-eval-header">
+                        <span className="eval-score-pill">
+                          ★ {getEvaluationForExecution(comparedExecutions[0].id)!.overallScore} / 5
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-eval-link"
+                          onClick={() => handleOpenEvaluationModal(comparedExecutions[0])}
+                        >
+                          Edit Evaluation
+                        </button>
+                      </div>
+                      <div className="eval-criteria-breakdown">
+                        {getEvaluationForExecution(comparedExecutions[0].id)!.criteria.map((c) => (
+                          <div key={c.name} className="eval-criterion-row">
+                            <span className="criterion-name">{c.name}:</span>
+                            <span className="criterion-score">{c.score} / 5</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="comparison-eval-empty">
+                      <span>Not evaluated yet</span>
+                      <button
+                        type="button"
+                        className="btn-eval-action"
+                        onClick={() => handleOpenEvaluationModal(comparedExecutions[0])}
+                      >
+                        + Evaluate Run A
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Column 2: Run B */}
@@ -396,6 +570,46 @@ export default function App() {
                 <div className="comparison-field">
                   <div className="result-section-label">Generated Output</div>
                   <div className="output-content">{comparedExecutions[1].output}</div>
+                </div>
+
+                {/* L2.3 Evaluation Summary for Run B */}
+                <div className="comparison-field">
+                  <div className="result-section-label">Manual Evaluation</div>
+                  {getEvaluationForExecution(comparedExecutions[1].id) ? (
+                    <div className="comparison-eval-block">
+                      <div className="comparison-eval-header">
+                        <span className="eval-score-pill">
+                          ★ {getEvaluationForExecution(comparedExecutions[1].id)!.overallScore} / 5
+                        </span>
+                        <button
+                          type="button"
+                          className="btn-eval-link"
+                          onClick={() => handleOpenEvaluationModal(comparedExecutions[1])}
+                        >
+                          Edit Evaluation
+                        </button>
+                      </div>
+                      <div className="eval-criteria-breakdown">
+                        {getEvaluationForExecution(comparedExecutions[1].id)!.criteria.map((c) => (
+                          <div key={c.name} className="eval-criterion-row">
+                            <span className="criterion-name">{c.name}:</span>
+                            <span className="criterion-score">{c.score} / 5</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="comparison-eval-empty">
+                      <span>Not evaluated yet</span>
+                      <button
+                        type="button"
+                        className="btn-eval-action"
+                        onClick={() => handleOpenEvaluationModal(comparedExecutions[1])}
+                      >
+                        + Evaluate Run B
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -440,6 +654,7 @@ export default function App() {
                 const isSelectionFull = selectedExecutionIds.length >= 2;
                 const isDisabled = !isSelected && isSelectionFull;
                 const selectionIndex = selectedExecutionIds.indexOf(item.id);
+                const itemEvaluation = getEvaluationForExecution(item.id);
 
                 return (
                   <div
@@ -473,16 +688,43 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="telemetry-badges">
-                        <span className="meta-badge model-badge" title="Model Identifier">
-                          🏷️ {item.metadata.model}
-                        </span>
-                        <span className="meta-badge latency-badge" title="Execution Latency">
-                          ⚡ {item.metadata.latencyMs} ms
-                        </span>
-                        <span className="meta-badge timestamp-badge" title="Execution Timestamp">
-                          🕒 {new Date(item.metadata.timestamp).toLocaleTimeString()}
-                        </span>
+                      <div className="history-item-right">
+                        {itemEvaluation ? (
+                          <div className="history-eval-group">
+                            <span className="eval-score-pill" title="Calculated overall evaluation score">
+                              ★ {itemEvaluation.overallScore} / 5
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-eval-edit"
+                              onClick={() => handleOpenEvaluationModal(item)}
+                              title="Edit evaluation criteria and scores"
+                            >
+                              Edit Eval
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-eval-action"
+                            onClick={() => handleOpenEvaluationModal(item)}
+                            title="Evaluate this execution"
+                          >
+                            + Evaluate
+                          </button>
+                        )}
+
+                        <div className="telemetry-badges">
+                          <span className="meta-badge model-badge" title="Model Identifier">
+                            🏷️ {item.metadata.model}
+                          </span>
+                          <span className="meta-badge latency-badge" title="Execution Latency">
+                            ⚡ {item.metadata.latencyMs} ms
+                          </span>
+                          <span className="meta-badge timestamp-badge" title="Execution Timestamp">
+                            🕒 {new Date(item.metadata.timestamp).toLocaleTimeString()}
+                          </span>
+                        </div>
                       </div>
                     </div>
 
@@ -502,10 +744,159 @@ export default function App() {
             </div>
           )}
         </section>
+
+        {/* L2.3 Manual Evaluation Modal Dialog */}
+        {evaluatingExecution && (
+          <div className="modal-overlay" onClick={handleCloseEvaluationModal}>
+            <div
+              className="modal-content"
+              onClick={(e) => e.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Manual Evaluation Modal"
+            >
+              <div className="modal-header">
+                <div>
+                  <h2 className="modal-title">Manual Evaluation</h2>
+                  <span className="modal-subtitle">
+                    Execution ID: <code>{evaluatingExecution.id.slice(0, 8)}</code>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="modal-close-btn"
+                  onClick={handleCloseEvaluationModal}
+                  aria-label="Close modal"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Execution Output Preview */}
+              <div className="eval-modal-preview">
+                <div className="history-label">Output to Evaluate:</div>
+                <div className="history-text output-preview modal-output-box">
+                  {evaluatingExecution.output}
+                </div>
+              </div>
+
+              {/* Suggested Presets */}
+              <div className="eval-presets-row">
+                <span className="presets-label">Quick Add Criteria:</span>
+                {['Accuracy', 'Clarity', 'Relevance', 'Completeness'].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    className="preset-chip"
+                    onClick={() => handleAddCriterion(preset)}
+                    disabled={modalCriteria.some((c) => c.name.toLowerCase() === preset.toLowerCase())}
+                  >
+                    + {preset}
+                  </button>
+                ))}
+              </div>
+
+              {/* Criteria List */}
+              <div className="eval-criteria-list">
+                {modalCriteria.map((c, index) => (
+                  <div key={index} className="eval-criteria-row">
+                    <span className="eval-criterion-title">{c.name}</span>
+                    <div className="score-selector" role="group" aria-label={`Score for ${c.name}`}>
+                      {[1, 2, 3, 4, 5].map((num) => (
+                        <button
+                          key={num}
+                          type="button"
+                          className={`score-pill ${c.score === num ? 'active' : ''}`}
+                          onClick={() => handleScoreChange(index, num)}
+                          aria-label={`Score ${num} for ${c.name}`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                    {modalCriteria.length > 1 && (
+                      <button
+                        type="button"
+                        className="btn-remove-criterion"
+                        onClick={() => handleRemoveCriterion(index)}
+                        title="Remove criterion"
+                        aria-label={`Remove ${c.name}`}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Add Custom Criterion Row */}
+              <div className="add-criterion-row">
+                <input
+                  type="text"
+                  className="variable-input add-criterion-input"
+                  placeholder="Add custom criterion (e.g., Tone, Formatting)..."
+                  value={newCriterionName}
+                  onChange={(e) => setNewCriterionName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddCriterion();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleAddCriterion()}
+                  disabled={!newCriterionName.trim()}
+                >
+                  Add
+                </button>
+              </div>
+
+              {/* Evaluation Error */}
+              {evaluationError && (
+                <div className="eval-error-message">⚠️ {evaluationError}</div>
+              )}
+
+              {/* Modal Footer with Live Preview */}
+              <div className="modal-footer">
+                <div className="live-score-preview">
+                  <span>Calculated Overall Score:</span>
+                  <strong>
+                    ★{' '}
+                    {modalCriteria.length > 0
+                      ? (modalCriteria.reduce((acc, c) => acc + c.score, 0) / modalCriteria.length).toFixed(2)
+                      : '0.00'}{' '}
+                    / 5.0
+                  </strong>
+                </div>
+                <div className="modal-actions">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleCloseEvaluationModal}
+                    disabled={isSubmittingEval}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleSubmitEvaluation}
+                    disabled={isSubmittingEval || modalCriteria.length === 0}
+                  >
+                    {isSubmittingEval ? 'Saving...' : 'Save Evaluation'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
 
       <footer className="footer">
-        <p>PromptLab — Milestone 2.2 Prompt Comparison</p>
+        <p>PromptLab — Milestone 2.3 Manual Prompt Evaluation</p>
       </footer>
     </div>
   );

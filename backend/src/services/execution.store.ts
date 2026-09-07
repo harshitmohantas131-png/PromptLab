@@ -21,6 +21,10 @@ export class ExecutionStore {
     return [...this.executions];
   }
 
+  getById(id: string): ExecutionRecord | undefined {
+    return this.executions.find((e) => e.id === id);
+  }
+
   clear(): number {
     const clearedCount = this.executions.length;
     this.executions = [];
