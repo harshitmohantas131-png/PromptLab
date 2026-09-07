@@ -82,7 +82,7 @@ async function runTests() {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  async function executeWithRetry(payload, maxRetries = 4) {
+  async function executeWithRetry(payload, maxRetries = 6) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       const res = await api('/api/prompts/execute', {
         method: 'POST',
@@ -90,8 +90,9 @@ async function runTests() {
       });
       if (res.status === 200) return res;
       if (attempt < maxRetries) {
-        console.log(`Prompt execution returned ${res.status}, retrying in 2s (attempt ${attempt}/${maxRetries})...`);
-        await sleep(2000);
+        const waitMs = attempt * 3000;
+        console.log(`Prompt execution returned ${res.status}, retrying in ${waitMs / 1000}s (attempt ${attempt}/${maxRetries})...`);
+        await sleep(waitMs);
       } else {
         return res;
       }
@@ -138,29 +139,186 @@ async function runTests() {
   assert(history2.data.executions[0]?.id === run2.data?.id, 'Newest execution (run2) appears at index 0');
   assert(history2.data.executions[1]?.id === run1.data?.id, 'Older execution (run1) appears at index 1');
 
-  // 10. Clear Execution History (DELETE /api/executions)
-  console.log('\nTesting DELETE /api/executions...');
+  // ================================================================
+  // 10. L2.3 Manual Prompt Evaluation Tests
+  // ================================================================
+  console.log('\n=== Testing L2.3 Manual Prompt Evaluation ===');
+  const targetExecId = run1.data.id;
+
+  // 10.1 Evaluation Validation: Non-existent executionId
+  const badExecEval = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: '00000000-0000-0000-0000-000000000000',
+      criteria: [{ name: 'Accuracy', score: 5 }],
+    }),
+  });
+  assert(badExecEval.status === 404, `Evaluation for non-existent executionId returns 404 Not Found (got ${badExecEval.status})`);
+
+  // 10.2 Evaluation Validation: Empty criteria array
+  const emptyCriteriaEval = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: targetExecId,
+      criteria: [],
+    }),
+  });
+  assert(emptyCriteriaEval.status === 400, 'Evaluation with empty criteria returns 400 Bad Request');
+
+  // 10.3 Evaluation Validation: Invalid score (out of bounds)
+  const outOfBoundsEval = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: targetExecId,
+      criteria: [{ name: 'Accuracy', score: 6 }],
+    }),
+  });
+  assert(outOfBoundsEval.status === 400, 'Evaluation with score > 5 returns 400 Bad Request');
+
+  const zeroScoreEval = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: targetExecId,
+      criteria: [{ name: 'Accuracy', score: 0 }],
+    }),
+  });
+  assert(zeroScoreEval.status === 400, 'Evaluation with score < 1 returns 400 Bad Request');
+
+  // 10.4 Evaluation Validation: Non-integer score
+  const decimalScoreEval = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: targetExecId,
+      criteria: [{ name: 'Accuracy', score: 4.5 }],
+    }),
+  });
+  assert(decimalScoreEval.status === 400, 'Evaluation with non-integer score returns 400 Bad Request');
+
+  // 10.5 Evaluation Validation: Empty criterion name
+  const emptyNameEval = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: targetExecId,
+      criteria: [{ name: '   ', score: 5 }],
+    }),
+  });
+  assert(emptyNameEval.status === 400, 'Evaluation with empty criterion name returns 400 Bad Request');
+
+  // 10.6 Evaluation Validation: Duplicate criterion name (case-insensitive)
+  const duplicateNameEval = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: targetExecId,
+      criteria: [
+        { name: 'Clarity', score: 5 },
+        { name: 'clarity', score: 4 },
+      ],
+    }),
+  });
+  assert(duplicateNameEval.status === 400, 'Evaluation with duplicate criteria names returns 400 Bad Request');
+  assert(
+    duplicateNameEval.data?.error?.includes('Duplicate criterion name'),
+    'Error message specifies duplicate criterion'
+  );
+
+  // 10.7 Create Evaluation (First evaluation -> 201 Created, server computes arithmetic mean)
+  console.log('Submitting initial evaluation (testing arithmetic mean calculation)...');
+  const createEvalRes = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: targetExecId,
+      criteria: [
+        { name: 'Accuracy', score: 5 },
+        { name: 'Clarity', score: 4 },
+        { name: 'Relevance', score: 4 },
+      ],
+      overallScore: 1.0, // Client attempts to spoof overallScore
+    }),
+  });
+  assert(createEvalRes.status === 201, `Initial evaluation returns 201 Created (got ${createEvalRes.status})`);
+  assert(typeof createEvalRes.data?.id === 'string', 'Evaluation has unique id');
+  assert(createEvalRes.data?.executionId === targetExecId, 'Evaluation references target executionId');
+  assert(createEvalRes.data?.overallScore === 4.33, `overallScore computed as arithmetic mean 4.33 (got ${createEvalRes.data?.overallScore})`);
+  assert(createEvalRes.data?.overallScore !== 1.0, 'Client-provided overallScore was ignored');
+  const initialEvalId = createEvalRes.data.id;
+
+  // 10.8 Verify ExecutionRecord was NOT mutated
+  const execCheck = await api('/api/executions');
+  const targetExecInStore = execCheck.data.executions.find((e) => e.id === targetExecId);
+  assert(targetExecInStore && !('criteria' in targetExecInStore) && !('overallScore' in targetExecInStore), 'ExecutionRecord was NOT mutated by evaluation');
+
+  // 10.9 Update Evaluation (Second evaluation for same executionId -> 200 OK, preserves ID)
+  console.log('Submitting updated evaluation (testing upsert and ID preservation)...');
+  const updateEvalRes = await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: targetExecId,
+      criteria: [
+        { name: 'Accuracy', score: 5 },
+        { name: 'Clarity', score: 5 },
+      ],
+    }),
+  });
+  assert(updateEvalRes.status === 200, `Updating evaluation returns 200 OK (got ${updateEvalRes.status})`);
+  assert(updateEvalRes.data?.id === initialEvalId, 'Evaluation ID was preserved upon update');
+  assert(updateEvalRes.data?.overallScore === 5, `Updated overallScore is 5 (got ${updateEvalRes.data?.overallScore})`);
+  assert(updateEvalRes.data?.criteria.length === 2, 'Criteria list updated to 2 items');
+
+  // 10.10 GET /api/evaluations and GET /api/evaluations?executionId=<id>
+  const allEvals = await api('/api/evaluations');
+  assert(allEvals.status === 200, 'GET /api/evaluations returns 200 OK');
+  assert(allEvals.data.total === 1, 'Total evaluations count is 1');
+
+  const filteredEval = await api(`/api/evaluations?executionId=${targetExecId}`);
+  assert(filteredEval.status === 200, 'GET /api/evaluations?executionId returns 200 OK');
+  assert(filteredEval.data.total === 1 && filteredEval.data.evaluations[0]?.id === initialEvalId, 'Filtered evaluation matches target');
+
+  // 10.11 DELETE /api/evaluations
+  console.log('Testing DELETE /api/evaluations...');
+  const delEvalRes = await api('/api/evaluations', { method: 'DELETE' });
+  assert(delEvalRes.status === 200, 'DELETE /api/evaluations returns 200 OK');
+  assert(delEvalRes.data?.clearedCount === 1, 'clearedCount is 1');
+
+  const afterDelEvals = await api('/api/evaluations');
+  assert(afterDelEvals.data.total === 0, 'Evaluations empty after DELETE /api/evaluations');
+
+  // Set up evaluation on run2 to test cascade clear
+  await api('/api/evaluations', {
+    method: 'POST',
+    body: JSON.stringify({
+      executionId: run2.data.id,
+      criteria: [{ name: 'Speed', score: 5 }],
+    }),
+  });
+  const beforeCascade = await api('/api/evaluations');
+  assert(beforeCascade.data.total === 1, 'Evaluation present before cascade');
+
+  // 11. Clear Execution History (DELETE /api/executions) & Test Cascade Clear
+  console.log('\nTesting DELETE /api/executions with cascade clear on evaluations...');
   const del = await api('/api/executions', { method: 'DELETE' });
   assert(del.status === 200, 'DELETE /api/executions returns 200 OK');
   assert(del.data.clearedCount === 2, `clearedCount is 2 (got ${del.data.clearedCount})`);
   assert(typeof del.data.message === 'string', 'Confirmation message returned');
 
-  // 11. Verify History is Empty after DELETE
+  // Verify evaluations were also cleared via cascade
+  const afterCascadeEvals = await api('/api/evaluations');
+  assert(afterCascadeEvals.data.total === 0, 'Evaluations automatically cleared when executions are cleared (cascade)');
+
+  // 12. Verify History is Empty after DELETE
   const historyAfterDelete = await api('/api/executions');
   assert(historyAfterDelete.data.total === 0, 'History total is 0 after DELETE');
   assert(historyAfterDelete.data.executions.length === 0, 'History array is empty after DELETE');
 
-  // 12. Deleting when already empty
+  // 13. Deleting when already empty
   const delEmpty = await api('/api/executions', { method: 'DELETE' });
   assert(delEmpty.status === 200, 'DELETE on empty history returns 200 OK');
   assert(delEmpty.data.clearedCount === 0, 'clearedCount is 0 when history was already empty');
 
-  // 13. Verify Provider Failure is NOT stored
-  // Even if provider fails (500), history should remain 0
+  // 14. Verify Provider Failure is NOT stored
   const historyCheck = await api('/api/executions');
   assert(historyCheck.data.total === 0, 'History remains 0 after all failure checks');
 
-  // 14. Verify No API Key Exposure in responses
+  // 15. Verify No API Key Exposure in responses
   const responsesToCheck = [initial, emptyPrompt, run1, history1, run2, history2, del, historyAfterDelete];
   let apiKeyExposed = false;
   for (const resp of responsesToCheck) {
